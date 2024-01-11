@@ -54,11 +54,19 @@ const RouteDetails: React.FC<SheetProps> = ({ sheetRef }) => {
 
         const processedStops: IStop[] = [];
         const directionPath = getPatternPathForSelectedRoute()?.patternPoints ?? [];
+        const otherDirectionIndex = selectedDirectionIndex === 0 ? 1 : 0;
+        const otherDirectionPath = selectedRoute.patternPaths?.[otherDirectionIndex]?.patternPoints ?? [];
+        const lastStop = otherDirectionPath.length > 0 ? otherDirectionPath.slice(-1)[0]?.stop : null;
 
         for (const point of directionPath) {
             if (!point.stop) continue;
             processedStops.push(point.stop);
         }
+
+        // if (lastStop) {
+        //     //processedStops.pop();
+        //     processedStops.push(lastStop);
+        // }
 
         setProcessedStops(processedStops);
     }, [selectedRoute, selectedDirectionIndex])
@@ -84,25 +92,45 @@ const RouteDetails: React.FC<SheetProps> = ({ sheetRef }) => {
         }
 
         const directionKeys = currentSelectedRoute.patternPaths.map(direction => direction.directionKey);
+        const otherDirectionIndex = selectedDirectionIndex === 0 ? 1 : 0;
+        const otherDirectionKey = currentSelectedRoute.patternPaths?.[otherDirectionIndex]?.directionKey;
 
         const newStopEstimates: ICachedStopEstimate[] = [];
 
         // load stop estimates concurrently
         const promises = allStops.map(stop =>
-            getNextDepartureTimes(currentSelectedRoute.key, directionKeys, stop.stopCode, authToken)
-                .then(response => {            
-                    GetNextDepartTimesResponseSchema.parse(response);
+        getNextDepartureTimes(currentSelectedRoute.key, directionKeys, stop.stopCode, authToken)
+            .then(response => {
+                GetNextDepartTimesResponseSchema.parse(response);
+                newStopEstimates.push({ stopCode: stop.stopCode, departureTimes: response });
+            })
+            .catch(error => {
+                console.error(error);
+                Alert.alert("Something went wrong", "Some features may not work correctly. Please try again later.");
+            })
+        );
 
+        // If there's another direction, fetch estimates for its stops as well
+        if (otherDirectionKey) {
+            const otherDirectionStops = currentSelectedRoute.patternPaths?.[otherDirectionIndex]?.patternPoints?.map(point => point.stop).filter(Boolean) || [];
+            const otherDirectionPromises = otherDirectionStops.map(stop =>
+            getNextDepartureTimes(currentSelectedRoute.key, [otherDirectionKey], stop.stopCode, authToken)
+                .then(response => {
+                    console.log("h");
+                    GetNextDepartTimesResponseSchema.parse(response);
                     newStopEstimates.push({ stopCode: stop.stopCode, departureTimes: response });
                 })
                 .catch(error => {
                     console.error(error);
-                    
                     Alert.alert("Something went wrong", "Some features may not work correctly. Please try again later.");
                 })
-        );
+            );
 
-        await Promise.all(promises);
+        await Promise.all(otherDirectionPromises);
+    }
+
+    // Wait for all promises to resolve before updating the state
+    await Promise.all(promises);
         setStopEstimates(newStopEstimates);
     }
 
@@ -156,6 +184,7 @@ const RouteDetails: React.FC<SheetProps> = ({ sheetRef }) => {
                     refreshing={false}
                     ItemSeparatorComponent={() => <View style={{ height: 1, backgroundColor: "#eaeaea", marginVertical: 4 }} />}
                     renderItem={({ item: stop, index }) => {
+                        
                         const departureTimes = stopEstimates.find((stopEstimate) => stopEstimate.stopCode === stop.stopCode);
                         let directionTimes: IRouteDirectionTime = { nextDeparts: [], directionKey: "", routeKey: "" };
 
